@@ -1,0 +1,156 @@
+{
+  "entities": {
+    "Brand": {
+      "title": "Brand",
+      "description": "A premium gear brand profile",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "logo": { "type": "string" },
+        "description": { "type": "string" },
+        "website": { "type": "string" },
+        "featured": { "type": "boolean" }
+      },
+      "required": ["name", "slug", "logo", "description", "website"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "A motorcycle gear category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "description": { "type": "string" },
+        "image": { "type": "string" },
+        "icon": { "type": "string" },
+        "count": { "type": "number" }
+      },
+      "required": ["name", "slug", "description", "image", "icon"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "A gear or accessory product listing",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "longDescription": { "type": "string" },
+        "brand": { "type": "string" },
+        "category": { "type": "string" },
+        "images": { "type": "array" },
+        "primaryImage": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "galleryImages": { "type": "array" },
+        "featureImage": { "type": "string" },
+        "optional360Url": { "type": "string" },
+        "specifications": { "type": "object" },
+        "pros": { "type": "array" },
+        "cons": { "type": "array" },
+        "features": { "type": "array" },
+        "highlights": { "type": "array" },
+        "price": { "type": "number" },
+        "mrp": { "type": "number" },
+        "discount": { "type": "number" },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "number" },
+        "affiliateLinks": { "type": "array" },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "keywords": { "type": "array" },
+        "tags": { "type": "array" },
+        "featured": { "type": "boolean" },
+        "trending": { "type": "boolean" },
+        "createdDate": { "type": "string" }
+      },
+      "required": ["name", "slug", "shortDescription", "longDescription", "brand", "category", "price", "mrp"]
+    },
+    "Blog": {
+      "title": "Blog",
+      "description": "A buying guide or review blog post",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "content": { "type": "string" },
+        "summary": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": { "type": "array" },
+        "author": { "type": "object" },
+        "image": { "type": "string" },
+        "readTime": { "type": "string" },
+        "createdDate": { "type": "string" },
+        "featured": { "type": "boolean" }
+      },
+      "required": ["title", "slug", "content", "summary", "category", "image", "readTime"]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "A customer inquiry message",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["name", "email", "subject", "message"]
+    },
+    "NewsletterSubscriber": {
+      "title": "NewsletterSubscriber",
+      "description": "An email subscribed to the newsletter",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "subscribedAt": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "ClickRecord": {
+      "title": "ClickRecord",
+      "description": "An affiliate link redirection record",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "platform": { "type": "string" },
+        "url": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["productId", "productName", "platform", "url"]
+    }
+  },
+  "firestore": {
+    "brands/{brandId}": {
+      "schema": "Brand",
+      "description": "Riding gear brand profiles"
+    },
+    "categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Motorcycle gear categories"
+    },
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "Riding gear and accessory product details"
+    },
+    "blogs/{blogId}": {
+      "schema": "Blog",
+      "description": "Rider guide and blog posts"
+    },
+    "contacts/{contactId}": {
+      "schema": "ContactMessage",
+      "description": "Contact inquiries submitted by riders"
+    },
+    "newsletter/{subscriberId}": {
+      "schema": "NewsletterSubscriber",
+      "description": "Rider newsletter audience subscription emails"
+    },
+    "clicks/{clickId}": {
+      "schema": "ClickRecord",
+      "description": "Affiliate redirection logs"
+    }
+  }
+}

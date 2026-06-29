@@ -1,0 +1,6 @@
+{
+  "name": "MotoGear Hub",
+  "description": "India's Premium Motorcycle Riding Gear & Accessories Discovery Platform",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

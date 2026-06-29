@@ -1,0 +1,151 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+:root {
+  --theme-bg: #F8FAFC;
+  --theme-bg-secondary: #F1F5F9;
+  --theme-card: #FFFFFF;
+  --theme-card-elevated: #F1F5F9;
+  --theme-border: #E2E8F0;
+  --theme-navbar: rgba(255, 255, 255, 0.90);
+  --theme-footer: #E2E8F0;
+
+  --theme-heading: #0F172A;
+  --theme-body: #475569;
+  --theme-muted: #64748B;
+  --theme-link: #2563EB;
+}
+
+.dark {
+  --theme-bg: #0F172A;
+  --theme-bg-secondary: #111827;
+  --theme-card: #1E293B;
+  --theme-card-elevated: #334155;
+  --theme-border: #334155;
+  --theme-navbar: rgba(15, 23, 42, 0.85);
+  --theme-footer: #020617;
+
+  --theme-heading: #F8FAFC;
+  --theme-body: #CBD5E1;
+  --theme-muted: #94A3B8;
+  --theme-link: #60A5FA;
+}
+
+@theme {
+  --font-sans: "Space Grotesk", sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  
+  --color-brand-primary: #2563EB;
+  --color-brand-dark: #0F172A;
+  --color-brand-accent: #FFFFFF;
+
+  /* Core design system colors */
+  --color-primary: #2563EB;
+  --color-primary-hover: #1D4ED8;
+  --color-primary-light: #60A5FA;
+
+  /* Redefine slate colors to match Midnight Blue specs exactly */
+  --color-slate-50: #F8FAFC;
+  --color-slate-100: #F1F5F9;
+  --color-slate-200: #E2E8F0;
+  --color-slate-300: #CBD5E1;
+  --color-slate-400: #94A3B8;
+  --color-slate-500: #64748B;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1E293B;
+  --color-slate-900: #111827;
+  --color-slate-950: #0F172A;
+
+  /* Map old orange colors to Primary Blue so that any un-migrated elements also look pristine! */
+  --color-orange-50: #EFF6FF;
+  --color-orange-100: #DBEAFE;
+  --color-orange-200: #BFDBFE;
+  --color-orange-300: #93C5FD;
+  --color-orange-400: #60A5FA;
+  --color-orange-500: #2563EB;
+  --color-orange-600: #1D4ED8;
+  --color-orange-700: #1E40AF;
+  --color-orange-800: #1E3A8A;
+  --color-orange-900: #172554;
+  --color-orange-950: #1E1B4B;
+
+  --color-amber-500: #2563EB;
+  --color-amber-600: #1D4ED8;
+
+  /* Specific Design System Elements mapping to CSS variables */
+  --color-theme-bg: var(--theme-bg);
+  --color-theme-bg-secondary: var(--theme-bg-secondary);
+  --color-theme-card: var(--theme-card);
+  --color-theme-card-elevated: var(--theme-card-elevated);
+  --color-theme-border: var(--theme-border);
+  --color-theme-navbar: var(--theme-navbar);
+  --color-theme-footer: var(--theme-footer);
+
+  --color-theme-heading: var(--theme-heading);
+  --color-theme-body: var(--theme-body);
+  --color-theme-muted: var(--theme-muted);
+  --color-theme-link: var(--theme-link);
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-panel-light {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.glass-card {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2563EB;
+}
+
+/* Custom Utilities */
+.text-gradient {
+  background: linear-gradient(135deg, #2563EB 0%, #60A5FA 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.bg-radial-glow {
+  background: radial-gradient(circle at top, rgba(37, 99, 235, 0.08) 0%, transparent 60%);
+}
+
+/* Page transitions */
+.fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}

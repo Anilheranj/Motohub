@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default safety deny net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reuseable primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && isEmailVerified() && request.auth.token.email == "anilheranj812@gmail.com";
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Brands Collection Rules
+    match /brands/{brandId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Categories Collection Rules
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Products Collection Rules
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Blogs Collection Rules
+    match /blogs/{blogId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Contact Messages Rules
+    match /contacts/{contactId} {
+      allow read, delete, update: if isAdmin();
+      allow create: if true; // Any rider can submit a message
+    }
+
+    // Newsletter Subscribers Rules
+    match /newsletter/{subscriberId} {
+      allow read, delete, update: if isAdmin();
+      allow create: if true; // Any rider can subscribe
+    }
+
+    // Click Records Rules
+    match /clicks/{clickId} {
+      allow read, delete, update: if isAdmin();
+      allow create: if true; // Client logs redirection click
+    }
+  }
+}
