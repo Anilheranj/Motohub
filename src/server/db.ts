@@ -3,32 +3,75 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { getFirestore } from 'firebase-admin/firestore';
-import { initializeApp, getApps } from 'firebase-admin/app';
+import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import firebaseConfig from '../../firebase-applet-config.json';
 import { SEED_BRANDS, SEED_CATEGORIES, SEED_PRODUCTS, SEED_BLOGS } from '../data/seedData';
 import { Product, Category, Brand, Blog, ClickRecord, ContactMessage, NewsletterSubscriber, DashboardStats } from '../types';
+import { uploadToCloudinary, deleteFromCloudinary } from './cloudinary';
+import {
+  MongoCategory,
+  MongoBrand,
+  MongoProduct,
+  MongoBlog,
+  MongoContactMessage,
+  MongoNewsletterSubscriber,
+  MongoClickRecord,
+  MongoAdmin,
+  ICategoryDoc,
+  IBrandDoc,
+  IProductDoc,
+  IBlogDoc,
+  IContactDoc,
+  INewsletterDoc,
+  IClickDoc
+} from './models';
 
-// Initialize firebase-admin
-let adminApp;
-try {
-  if (getApps().length === 0) {
-    adminApp = initializeApp({
-      projectId: firebaseConfig.projectId,
-    });
-  } else {
-    adminApp = getApps()[0];
+let isMongoConnected = false;
+
+// Cloudinary Image Processing Helper
+async function processProductImages(p: any): Promise<any> {
+  if (!p) return p;
+  try {
+    if (p.primaryImage && p.primaryImage.startsWith('data:image/')) {
+      p.primaryImage = await uploadToCloudinary(p.primaryImage);
+    }
+    if (p.thumbnail && p.thumbnail.startsWith('data:image/')) {
+      p.thumbnail = await uploadToCloudinary(p.thumbnail);
+    }
+    if (p.featureImage && p.featureImage.startsWith('data:image/')) {
+      p.featureImage = await uploadToCloudinary(p.featureImage);
+    }
+    
+    if (p.galleryImages && Array.isArray(p.galleryImages)) {
+      const urls = [];
+      for (const img of p.galleryImages) {
+        if (img && img.startsWith('data:image/')) {
+          urls.push(await uploadToCloudinary(img));
+        } else {
+          urls.push(img);
+        }
+      }
+      p.galleryImages = urls;
+    }
+    
+    if (p.images && Array.isArray(p.images)) {
+      const urls = [];
+      for (const img of p.images) {
+        if (img && img.startsWith('data:image/')) {
+          urls.push(await uploadToCloudinary(img));
+        } else {
+          urls.push(img);
+        }
+      }
+      p.images = urls;
+    }
+  } catch (err) {
+    console.error('Error processing product images for Cloudinary:', err);
   }
-} catch (err) {
-  console.error('Error initializing firebase-admin SDK:', err);
+  return p;
 }
 
-const firestore = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
-
-// ---------------------------------------------------------------------------
-// MEMORY FALLBACKS (If Firestore is completely unreachable or throws)
-// ---------------------------------------------------------------------------
+// Memory fallback to ensure smooth startup even if MONGODB_URI is absent
 let memBrands: Brand[] = [...SEED_BRANDS];
 let memCategories: Category[] = [...SEED_CATEGORIES];
 let memProducts: Product[] = [...SEED_PRODUCTS];
@@ -66,64 +109,88 @@ let memClicks: ClickRecord[] = [
   { id: 'clk6', productId: 'p7', productName: 'Royal Enfield Nirbhay Armored Jacket', platform: 'official', url: 'https://royalenfield.com/gear/nirbhay', timestamp: new Date(Date.now() - 3600000 * 12).toISOString() },
 ];
 
-let isFirebaseReady = false;
-
-// Initialize Database Connection and Seed Default Data
+// Connection & Seeding
 export async function initDatabase() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.warn('⚠️ MONGODB_URI environment variable is missing. Running in highly durable memory-fallback mode.');
+    isMongoConnected = false;
+    return;
+  }
+
   try {
-    // Quick test read to verify connection
-    const testDoc = await firestore.collection('system_test').limit(1).get();
-    isFirebaseReady = true;
-    console.log('🚀 Successfully connected to Firebase Firestore database!');
+    mongoose.set('strictQuery', false);
+    await mongoose.connect(uri);
+    isMongoConnected = true;
+    console.log('🚀 Connected to MongoDB Atlas successfully!');
 
-    // Check if seeding is needed
-    const productsSnap = await firestore.collection('products').limit(1).get();
-    if (productsSnap.empty) {
-      console.log('🌱 Seeding Firestore database with default premium gear...');
+    // Initialize/Seed Default Data if empty
+    const productCount = await MongoProduct.countDocuments();
+    if (productCount === 0) {
+      console.log('🌱 Seeding MongoDB with high-quality MotoGear catalog...');
       
-      // Seed brands
+      // Seed Categories
+      for (const cat of SEED_CATEGORIES) {
+        await MongoCategory.create(cat);
+      }
+      
+      // Seed Brands
       for (const b of SEED_BRANDS) {
-        await firestore.collection('brands').doc(b.id).set(b);
+        await MongoBrand.create(b);
       }
-      
-      // Seed categories
-      for (const c of SEED_CATEGORIES) {
-        await firestore.collection('categories').doc(c.id).set(c);
-      }
-      
-      // Seed products
+
+      // Seed Products
       for (const p of SEED_PRODUCTS) {
-        await firestore.collection('products').doc(p.id).set(p);
+        await MongoProduct.create(p);
       }
-      
-      // Seed blogs
+
+      // Seed Blogs
       for (const bl of SEED_BLOGS) {
-        await firestore.collection('blogs').doc(bl.id).set(bl);
+        await MongoBlog.create(bl);
       }
 
-      // Seed default admin logs/messages
+      // Seed default Contacts, Newsletter and Clicks
       for (const msg of memContacts) {
-        await firestore.collection('contacts').doc(msg.id).set(msg);
+        await MongoContactMessage.create(msg);
       }
-
       for (const sub of memSubscribers) {
-        await firestore.collection('newsletter').doc(sub.id).set(sub);
+        await MongoNewsletterSubscriber.create(sub);
+      }
+      for (const clk of memClicks) {
+        await MongoClickRecord.create(clk);
       }
 
-      for (const clk of memClicks) {
-        await firestore.collection('clicks').doc(clk.id).set(clk);
-      }
-      
-      console.log('🌱 Firestore Database seeded successfully!');
+      console.log('🌱 MongoDB seeding completed successfully!');
     }
+
+    // Ensure default Admin user exists in database
+    const adminCount = await MongoAdmin.countDocuments();
+    if (adminCount === 0) {
+      const defaultUser = (process.env.ADMIN_USERNAME || 'admin').toLowerCase().trim();
+      const defaultPass = process.env.ADMIN_PASSWORD || 'admin123';
+      const hashedPassword = await bcrypt.hash(defaultPass, 10);
+      await MongoAdmin.create({ username: defaultUser, password: hashedPassword });
+      console.log(`🔐 Initialized default admin user: "${defaultUser}" in MongoDB`);
+    }
+
   } catch (err) {
-    console.error('❌ Failed to verify Firestore connection. Falling back to memory storage mode.', err);
-    isFirebaseReady = false;
+    console.error('❌ Failed to connect to MongoDB Atlas:', err);
+    isMongoConnected = false;
   }
 }
 
-// Helper to populate fallbacks for products
+// Helper to sanitize Mongoose document objects to clean plain objects
+const cleanObj = <T>(doc: any): T => {
+  if (!doc) return null as any;
+  const obj = doc.toObject ? doc.toObject() : doc;
+  delete obj._id;
+  delete obj.__v;
+  return obj as T;
+};
+
+// Helper to populate image fallbacks
 const populateImageFallbacks = (p: any): Product => {
+  if (!p) return null as any;
   const images = p.images || [];
   return {
     ...p,
@@ -135,22 +202,16 @@ const populateImageFallbacks = (p: any): Product => {
   };
 };
 
-// ---------------------------------------------------------------------------
-// DATA STORAGE INTERFACE WRAPPERS
-// ---------------------------------------------------------------------------
+// Core db database controller matching the existing interface
 export const db = {
-  isMongo: () => false,
-  isFirebase: () => isFirebaseReady,
+  isMongo: () => isMongoConnected,
+  isFirebase: () => false,
 
   // CATEGORIES
   getCategories: async (): Promise<Category[]> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('categories').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
-      } catch (err) {
-        console.error('Firestore getCategories error:', err);
-      }
+    if (isMongoConnected) {
+      const docs = await MongoCategory.find({}).sort({ name: 1 });
+      return docs.map(d => cleanObj<Category>(d));
     }
     return memCategories;
   },
@@ -158,13 +219,9 @@ export const db = {
   createCategory: async (data: Omit<Category, 'id'>): Promise<Category> => {
     const id = 'cat_' + Date.now();
     const newCat = { ...data, id, count: 0 };
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('categories').doc(id).set(newCat);
-        return newCat;
-      } catch (err) {
-        console.error('Firestore createCategory error:', err);
-      }
+    if (isMongoConnected) {
+      const created = await MongoCategory.create(newCat);
+      return cleanObj<Category>(created);
     }
     memCategories.push(newCat);
     return newCat;
@@ -172,13 +229,9 @@ export const db = {
 
   // BRANDS
   getBrands: async (): Promise<Brand[]> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('brands').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Brand));
-      } catch (err) {
-        console.error('Firestore getBrands error:', err);
-      }
+    if (isMongoConnected) {
+      const docs = await MongoBrand.find({}).sort({ name: 1 });
+      return docs.map(d => cleanObj<Brand>(d));
     }
     return memBrands;
   },
@@ -186,13 +239,9 @@ export const db = {
   createBrand: async (data: Omit<Brand, 'id'>): Promise<Brand> => {
     const id = 'brand_' + Date.now();
     const newBrand = { ...data, id };
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('brands').doc(id).set(newBrand);
-        return newBrand;
-      } catch (err) {
-        console.error('Firestore createBrand error:', err);
-      }
+    if (isMongoConnected) {
+      const created = await MongoBrand.create(newBrand);
+      return cleanObj<Brand>(created);
     }
     memBrands.push(newBrand);
     return newBrand;
@@ -200,84 +249,84 @@ export const db = {
 
   // PRODUCTS
   getProducts: async (): Promise<Product[]> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('products').get();
-        return snapshot.docs.map(doc => populateImageFallbacks({ id: doc.id, ...doc.data() }));
-      } catch (err) {
-        console.error('Firestore getProducts error:', err);
-      }
+    if (isMongoConnected) {
+      const docs = await MongoProduct.find({}).sort({ createdAt: -1 });
+      return docs.map(d => populateImageFallbacks(cleanObj<Product>(d)));
     }
     return memProducts.map(populateImageFallbacks);
   },
 
   getProductBySlug: async (slug: string): Promise<Product | null> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('products').where('slug', '==', slug).limit(1).get();
-        if (!snapshot.empty) {
-          const doc = snapshot.docs[0];
-          return populateImageFallbacks({ id: doc.id, ...doc.data() });
-        }
-        return null;
-      } catch (err) {
-        console.error('Firestore getProductBySlug error:', err);
-      }
+    if (isMongoConnected) {
+      const doc = await MongoProduct.findOne({ slug });
+      return doc ? populateImageFallbacks(cleanObj<Product>(doc)) : null;
     }
     const item = memProducts.find(x => x.slug === slug);
     return item ? populateImageFallbacks(item) : null;
   },
 
   createProduct: async (data: Omit<Product, 'id'>): Promise<Product> => {
-    const discPercent = data.mrp > 0 ? Math.round(((data.mrp - data.price) / data.mrp) * 100) : 0;
+    const processedData = await processProductImages({ ...data });
+    const discPercent = processedData.mrp > 0 ? Math.round(((processedData.mrp - processedData.price) / processedData.mrp) * 100) : 0;
     const id = 'prod_' + Date.now();
     const newProd = {
-      ...data,
+      ...processedData,
       id,
       discount: discPercent,
-      rating: data.rating || 4.5,
-      reviewCount: 0,
+      rating: processedData.rating || 4.5,
+      reviewCount: processedData.reviewCount || 0,
       createdDate: new Date().toISOString()
     } as Product;
 
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('products').doc(id).set(newProd);
-        return newProd;
-      } catch (err) {
-        console.error('Firestore createProduct error:', err);
-      }
+    if (isMongoConnected) {
+      const created = await MongoProduct.create(newProd);
+      return populateImageFallbacks(cleanObj<Product>(created));
     }
     memProducts.push(newProd);
     return newProd;
   },
 
   updateProduct: async (id: string, data: Partial<Product>): Promise<Product | null> => {
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('products').doc(id).update(data);
-        const updatedDoc = await firestore.collection('products').doc(id).get();
-        return { id: updatedDoc.id, ...updatedDoc.data() } as Product;
-      } catch (err) {
-        console.error('Firestore updateProduct error:', err);
+    const processedData = await processProductImages({ ...data });
+    if (isMongoConnected) {
+      const oldProd = await MongoProduct.findOne({ id });
+      if (oldProd) {
+        if (processedData.primaryImage && oldProd.primaryImage && processedData.primaryImage !== oldProd.primaryImage) {
+          await deleteFromCloudinary(oldProd.primaryImage);
+        }
+        if (processedData.thumbnail && oldProd.thumbnail && processedData.thumbnail !== oldProd.thumbnail) {
+          await deleteFromCloudinary(oldProd.thumbnail);
+        }
+        if (processedData.featureImage && oldProd.featureImage && processedData.featureImage !== oldProd.featureImage) {
+          await deleteFromCloudinary(oldProd.featureImage);
+        }
       }
+      const doc = await MongoProduct.findOneAndUpdate({ id }, { $set: processedData }, { new: true });
+      return doc ? populateImageFallbacks(cleanObj<Product>(doc)) : null;
     }
     const idx = memProducts.findIndex(x => x.id === id);
     if (idx !== -1) {
-      memProducts[idx] = { ...memProducts[idx], ...data } as Product;
+      memProducts[idx] = { ...memProducts[idx], ...processedData } as Product;
       return memProducts[idx];
     }
     return null;
   },
 
   deleteProduct: async (id: string): Promise<boolean> => {
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('products').doc(id).delete();
-        return true;
-      } catch (err) {
-        console.error('Firestore deleteProduct error:', err);
+    if (isMongoConnected) {
+      const oldProd = await MongoProduct.findOne({ id });
+      if (oldProd) {
+        if (oldProd.primaryImage) await deleteFromCloudinary(oldProd.primaryImage);
+        if (oldProd.thumbnail) await deleteFromCloudinary(oldProd.thumbnail);
+        if (oldProd.featureImage) await deleteFromCloudinary(oldProd.featureImage);
+        if (oldProd.galleryImages) {
+          for (const img of oldProd.galleryImages) {
+            await deleteFromCloudinary(img);
+          }
+        }
       }
+      const result = await MongoProduct.deleteOne({ id });
+      return result.deletedCount > 0;
     }
     const lenBefore = memProducts.length;
     memProducts = memProducts.filter(x => x.id !== id);
@@ -286,29 +335,17 @@ export const db = {
 
   // BLOGS
   getBlogs: async (): Promise<Blog[]> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('blogs').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Blog));
-      } catch (err) {
-        console.error('Firestore getBlogs error:', err);
-      }
+    if (isMongoConnected) {
+      const docs = await MongoBlog.find({}).sort({ createdAt: -1 });
+      return docs.map(d => cleanObj<Blog>(d));
     }
     return memBlogs;
   },
 
   getBlogBySlug: async (slug: string): Promise<Blog | null> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('blogs').where('slug', '==', slug).limit(1).get();
-        if (!snapshot.empty) {
-          const doc = snapshot.docs[0];
-          return { id: doc.id, ...doc.data() } as Blog;
-        }
-        return null;
-      } catch (err) {
-        console.error('Firestore getBlogBySlug error:', err);
-      }
+    if (isMongoConnected) {
+      const doc = await MongoBlog.findOne({ slug });
+      return doc ? cleanObj<Blog>(doc) : null;
     }
     const item = memBlogs.find(x => x.slug === slug);
     return item ? item : null;
@@ -319,27 +356,18 @@ export const db = {
     const id = 'blog_' + Date.now();
     const newBlog = { ...data, id, createdDate: formattedDate };
 
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('blogs').doc(id).set(newBlog);
-        return newBlog;
-      } catch (err) {
-        console.error('Firestore createBlog error:', err);
-      }
+    if (isMongoConnected) {
+      const created = await MongoBlog.create(newBlog);
+      return cleanObj<Blog>(created);
     }
     memBlogs.push(newBlog);
     return newBlog;
   },
 
   updateBlog: async (id: string, data: Partial<Blog>): Promise<Blog | null> => {
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('blogs').doc(id).update(data);
-        const updatedDoc = await firestore.collection('blogs').doc(id).get();
-        return { id: updatedDoc.id, ...updatedDoc.data() } as Blog;
-      } catch (err) {
-        console.error('Firestore updateBlog error:', err);
-      }
+    if (isMongoConnected) {
+      const doc = await MongoBlog.findOneAndUpdate({ id }, { $set: data }, { new: true });
+      return doc ? cleanObj<Blog>(doc) : null;
     }
     const idx = memBlogs.findIndex(x => x.id === id);
     if (idx !== -1) {
@@ -350,13 +378,9 @@ export const db = {
   },
 
   deleteBlog: async (id: string): Promise<boolean> => {
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('blogs').doc(id).delete();
-        return true;
-      } catch (err) {
-        console.error('Firestore deleteBlog error:', err);
-      }
+    if (isMongoConnected) {
+      const result = await MongoBlog.deleteOne({ id });
+      return result.deletedCount > 0;
     }
     const lenBefore = memBlogs.length;
     memBlogs = memBlogs.filter(x => x.id !== id);
@@ -365,13 +389,9 @@ export const db = {
 
   // NEWSLETTER SUBSCRIBERS
   getNewsletterSubscribers: async (): Promise<NewsletterSubscriber[]> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('newsletter').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as NewsletterSubscriber));
-      } catch (err) {
-        console.error('Firestore getNewsletterSubscribers error:', err);
-      }
+    if (isMongoConnected) {
+      const docs = await MongoNewsletterSubscriber.find({}).sort({ createdAt: -1 });
+      return docs.map(d => cleanObj<NewsletterSubscriber>(d));
     }
     return memSubscribers;
   },
@@ -381,15 +401,11 @@ export const db = {
     const id = 'sub_' + Date.now();
     const newSub = { id, email: normalizedEmail, subscribedAt: new Date().toISOString() };
 
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('newsletter').where('email', '==', normalizedEmail).limit(1).get();
-        if (!snapshot.empty) return false;
-        await firestore.collection('newsletter').doc(id).set(newSub);
-        return true;
-      } catch (err) {
-        console.error('Firestore addNewsletterSubscriber error:', err);
-      }
+    if (isMongoConnected) {
+      const existing = await MongoNewsletterSubscriber.findOne({ email: normalizedEmail });
+      if (existing) return false;
+      await MongoNewsletterSubscriber.create(newSub);
+      return true;
     }
 
     const existing = memSubscribers.find(x => x.email === normalizedEmail);
@@ -400,13 +416,9 @@ export const db = {
 
   // CONTACT MESSAGES
   getContactMessages: async (): Promise<ContactMessage[]> => {
-    if (isFirebaseReady) {
-      try {
-        const snapshot = await firestore.collection('contacts').orderBy('createdAt', 'desc').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ContactMessage));
-      } catch (err) {
-        console.error('Firestore getContactMessages error:', err);
-      }
+    if (isMongoConnected) {
+      const docs = await MongoContactMessage.find({}).sort({ createdAt: -1 });
+      return docs.map(d => cleanObj<ContactMessage>(d));
     }
     return memContacts;
   },
@@ -420,26 +432,18 @@ export const db = {
       read: false
     };
 
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('contacts').doc(id).set(newMsg);
-        return newMsg;
-      } catch (err) {
-        console.error('Firestore addContactMessage error:', err);
-      }
+    if (isMongoConnected) {
+      const created = await MongoContactMessage.create(newMsg);
+      return cleanObj<ContactMessage>(created);
     }
     memContacts.unshift(newMsg);
     return newMsg;
   },
 
   markContactMessageRead: async (id: string): Promise<boolean> => {
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('contacts').doc(id).update({ read: true });
-        return true;
-      } catch (err) {
-        console.error('Firestore markContactMessageRead error:', err);
-      }
+    if (isMongoConnected) {
+      const result = await MongoContactMessage.updateOne({ id }, { $set: { read: true } });
+      return result.modifiedCount > 0;
     }
     const msg = memContacts.find(x => x.id === id);
     if (msg) {
@@ -450,27 +454,33 @@ export const db = {
   },
 
   // CLICK TRACKING & REDIRECT LOGGING
-  trackClick: async (productId: string, platform: string, url: string): Promise<void> => {
+  trackClick: async (
+    productId: string,
+    platform: string,
+    url: string,
+    browser?: string,
+    device?: string,
+    referrer?: string
+  ): Promise<void> => {
     const prods = await db.getProducts();
     const product = prods.find(x => x.id === productId);
     const productName = product ? product.name : 'Unknown Product';
     const id = 'click_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-    const clk: ClickRecord = {
+    const clk: any = {
       id,
       productId,
       productName,
       platform,
       url,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      browser: browser || '',
+      device: device || '',
+      referrer: referrer || ''
     };
 
-    if (isFirebaseReady) {
-      try {
-        await firestore.collection('clicks').doc(id).set(clk);
-        return;
-      } catch (err) {
-        console.error('Firestore trackClick error:', err);
-      }
+    if (isMongoConnected) {
+      await MongoClickRecord.create(clk);
+      return;
     }
     memClicks.unshift(clk);
   },
@@ -481,22 +491,12 @@ export const db = {
     const subs = await db.getNewsletterSubscribers();
     const msgs = await db.getContactMessages();
 
-    let clicks: ClickRecord[] = [];
+    let clicks: any[] = [];
     let totalClicks = 0;
 
-    if (isFirebaseReady) {
-      try {
-        const clicksSnap = await firestore.collection('clicks').orderBy('timestamp', 'desc').limit(100).get();
-        clicks = clicksSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClickRecord));
-        
-        // Count total clicks from metadata or directly
-        const countSnap = await firestore.collection('clicks').get();
-        totalClicks = countSnap.size;
-      } catch (err) {
-        console.error('Firestore getDashboardStats clicks error:', err);
-        clicks = memClicks;
-        totalClicks = memClicks.length;
-      }
+    if (isMongoConnected) {
+      clicks = await MongoClickRecord.find({}).sort({ createdAt: -1 }).lean();
+      totalClicks = clicks.length;
     } else {
       clicks = memClicks;
       totalClicks = memClicks.length;
@@ -506,14 +506,15 @@ export const db = {
     const prodCounts: Record<string, number> = {};
 
     clicks.forEach(c => {
-      const plat = c.platform.toLowerCase();
+      const plat = (c.platform || '').toLowerCase();
       if (clicksByPlatform[plat] !== undefined) {
         clicksByPlatform[plat]++;
       } else {
         clicksByPlatform.other = (clicksByPlatform.other || 0) + 1;
       }
 
-      prodCounts[c.productName] = (prodCounts[c.productName] || 0) + 1;
+      const pName = c.productName || 'Unknown Product';
+      prodCounts[pName] = (prodCounts[pName] || 0) + 1;
     });
 
     const clicksByProduct = Object.entries(prodCounts)
@@ -531,18 +532,23 @@ export const db = {
       clicksByProduct,
       recentClicks: clicks.slice(0, 10).map(c => ({
         id: c.id,
-        productName: c.productName,
+        productName: c.productName || 'Unknown Product',
         platform: c.platform,
-        timestamp: c.timestamp
+        timestamp: c.timestamp || c.createdAt || new Date().toISOString()
       }))
     };
   },
 
-  // SECURITY gate fallback matching mongoose admin verification
   verifyAdmin: async (username: string, passwordPlain: string): Promise<boolean> => {
-    // Admin credentials for dashboard gateway - securely loaded from environment variables
-    const expectedUsername = process.env.ADMIN_USERNAME || 'admin';
+    if (isMongoConnected) {
+      const admin = await MongoAdmin.findOne({ username: username.toLowerCase().trim() });
+      if (admin) {
+        return bcrypt.compare(passwordPlain, admin.password);
+      }
+    }
+    // Fallback or Seeding fallback
+    const expectedUsername = (process.env.ADMIN_USERNAME || 'admin').toLowerCase().trim();
     const expectedPassword = process.env.ADMIN_PASSWORD || 'admin123';
-    return username === expectedUsername && passwordPlain === expectedPassword;
+    return username.toLowerCase().trim() === expectedUsername && passwordPlain === expectedPassword;
   }
 };

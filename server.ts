@@ -8,6 +8,7 @@ import path from 'path';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
+import helmet from 'helmet';
 import { initDatabase, db } from './src/server/db';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -17,15 +18,69 @@ const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'motogear-hub-super-secret-key-2026';
 
 // ---------------------------------------------------------------------------
-// MIDDLEWARE CONFIGURATION
+// MIDDLEWARE & SECURITY CONFIGURATION
 // ---------------------------------------------------------------------------
 
+// Production HTTP headers security
+app.use(helmet({
+  contentSecurityPolicy: false // Disabled to support Unsplash, YouTube and development iframe integration
+}));
+
+// CORS Configuration
 app.use(cors({
   origin: true, // Allow all origins for simplicity in previews
   credentials: true
 }));
+
 app.use(express.json());
 app.use(cookieParser());
+
+// Custom In-Memory Rate Limiter (efficient and zero package-bloat)
+const ipLimits = new Map<string, { count: number; resetAt: number }>();
+function rateLimiter(req: Request, res: Response, next: NextFunction) {
+  const ip = req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown';
+  const now = Date.now();
+  const limitWindow = 60 * 1000; // 1 minute
+  const maxRequests = 150; // generous 150 requests per minute
+  
+  const record = ipLimits.get(ip);
+  if (!record || now > record.resetAt) {
+    ipLimits.set(ip, { count: 1, resetAt: now + limitWindow });
+    return next();
+  }
+  
+  record.count++;
+  if (record.count > maxRequests) {
+    return res.status(429).json({ error: 'Too many requests from this IP. Please try again after a minute.' });
+  }
+  next();
+}
+
+app.use(rateLimiter);
+
+// Request validation middlewares for input safety
+function validateLogin(req: Request, res: Response, next: NextFunction) {
+  const { username, password } = req.body;
+  if (!username || typeof username !== 'string' || username.trim().length === 0) {
+    return res.status(400).json({ error: 'Valid username is required.' });
+  }
+  if (!password || typeof password !== 'string' || password.length < 4) {
+    return res.status(400).json({ error: 'Password must be at least 4 characters long.' });
+  }
+  next();
+}
+
+function validateProduct(req: Request, res: Response, next: NextFunction) {
+  const { name, slug, brand, category, price, mrp } = req.body;
+  if (!name || typeof name !== 'string') return res.status(400).json({ error: 'Product name is required.' });
+  if (!slug || typeof slug !== 'string') return res.status(400).json({ error: 'Product SEO slug is required.' });
+  if (!brand || typeof brand !== 'string') return res.status(400).json({ error: 'Product brand identifier is required.' });
+  if (!category || typeof category !== 'string') return res.status(400).json({ error: 'Product category is required.' });
+  if (typeof price !== 'number' || price < 0) return res.status(400).json({ error: 'Product price must be a positive number.' });
+  if (typeof mrp !== 'number' || mrp < 0) return res.status(400).json({ error: 'Product MRP must be a positive number.' });
+  next();
+}
+
 
 // ---------------------------------------------------------------------------
 // AUTHENTICATION MIDDLEWARES
@@ -58,7 +113,7 @@ export function requireAdmin(req: AuthenticatedRequest, res: Response, next: Nex
 // ---------------------------------------------------------------------------
 
 // Auth Routes
-app.post('/api/auth/login', async (req: Request, res: Response) => {
+app.post('/api/auth/login', validateLogin, async (req: Request, res: Response) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -170,7 +225,7 @@ app.get('/api/products/:slug', async (req, res) => {
   }
 });
 
-app.post('/api/products', requireAdmin, async (req, res) => {
+app.post('/api/products', requireAdmin, validateProduct, async (req, res) => {
   try {
     const created = await db.createProduct(req.body);
     res.status(201).json(created);
@@ -266,7 +321,21 @@ app.post('/api/clicks', async (req, res) => {
   }
 
   try {
-    await db.trackClick(productId, platform, url);
+    const userAgent = req.headers['user-agent'] || '';
+    const referrer = req.headers['referer'] || req.headers['referrer'] || '';
+    
+    let browser = 'Other';
+    if (userAgent.includes('Firefox')) browser = 'Firefox';
+    else if (userAgent.includes('Chrome') || userAgent.includes('CriOS')) browser = 'Chrome';
+    else if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) browser = 'Safari';
+    else if (userAgent.includes('Edge') || userAgent.includes('Edg')) browser = 'Edge';
+
+    let device = 'Desktop';
+    if (/Mobi|Android|iPhone|iPad|Tablet/i.test(userAgent)) {
+      device = 'Mobile';
+    }
+
+    await db.trackClick(productId, platform, url, browser, device, String(referrer));
     res.json({ success: true, message: 'Affiliate redirect click tracked successfully.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -359,13 +428,14 @@ app.post('/api/ai-chat', async (req, res) => {
     const systemInstruction = `You are the ultimate luxury, premium motorcycle gear AI assistant for MotoGear Hub.
 You provide professional, expert recommendations inspired by luxury brands like Ducati, Triumph, BMW Motorrad, and RevZilla.
 You should:
-1. Answer questions about riding gear, helmets, jackets, boots, and intercoms.
+1. Answer questions about riding gear, helmets, jackets, gloves, boots, and Bluetooth intercoms.
 2. Recommend accessories based on style (e.g., street, track, touring, adventure, off-road).
 3. Compare product specifications, prices, pros, and cons.
 4. Suggest helmets based on the user's budget.
 5. Guide users through our website pages (e.g., Home, Products, Comparison, Blogs, About, Contact).
 6. Provide actual info from our catalog. Keep answers concise, direct, helpful, and free of fluff.
 7. If the user asks for links, suggest using our Comparison page (#compare) or Products page (#products) or individual product slugs (e.g., #product/<slug>).
+8. IMPORTANT: If you cannot answer the user's query because it is out of scope (e.g. general questions unrelated to riding gear/helmets/motorcycles), or if the user asks to submit a contact message, open a ticket, or speak to a senior rider/human, you MUST append the exact tag \`[STORE_CONTACT_REQUEST]\` at the very end of your response. Politely state that you have filed a secure ticket and a senior reviewer will follow up.
 
 Our current categories:
 ${categoriesSummary}
@@ -383,7 +453,12 @@ Provide a friendly, highly professional, premium response. Format your output ni
       // Graceful offline simulated fallback
       const lower = message.toLowerCase();
       let reply = "I am MotoGear's Premium AI Assistant. Currently, my live AI core is in simulation mode, but I can still help you with our gear catalog! ";
-      if (lower.includes('helmet')) {
+      let shouldStore = false;
+
+      if (lower.includes('ticket') || lower.includes('human') || lower.includes('senior') || lower.includes('contact') || lower.includes('message')) {
+        reply = "I understand you'd like to reach our senior reviewers directly. I've automatically created a priority ticket for you in our systems. A veteran rider will reach out to you via email shortly!";
+        shouldStore = true;
+      } else if (lower.includes('helmet')) {
         reply += "For helmets, I highly recommend checking out the **MT Thunder 4 SV** or **LS2 Storm II**. They offer incredible ECE 22.06 certified safety and high-speed aerodynamics. Navigate to our Products section and select Helmets to compare them!";
       } else if (lower.includes('jacket')) {
         reply += "For riding jackets, we have premium gear like the **Alpinestars T-GP Plus R v3 Air Jacket** for hot weather, or the heavy-duty **Dainese Racing 4** leather jacket. They feature Level 2 armored shoulders and elbows.";
@@ -394,6 +469,16 @@ Provide a friendly, highly professional, premium response. Format your output ni
       } else {
         reply += "We offer high-performance helmets, jackets, gloves, and intercoms from Alpinestars, Dainese, MT Helmets, LS2, and Cardo Systems. What kind of gear or budget are you looking for today?";
       }
+
+      if (shouldStore) {
+        await db.addContactMessage({
+          name: 'AI Chat Guest',
+          email: 'aichat@motogearhub.in',
+          subject: 'Escalated from AI Chatbot Fallback',
+          message: message
+        });
+      }
+
       return res.json({ reply });
     }
 
@@ -427,7 +512,23 @@ Provide a friendly, highly professional, premium response. Format your output ni
       }
     });
 
-    res.json({ reply: response.text || 'I am sorry, I could not generate a response right now.' });
+    let reply = response.text || 'I am sorry, I could not generate a response right now.';
+    if (reply.includes('[STORE_CONTACT_REQUEST]')) {
+      reply = reply.replace('[STORE_CONTACT_REQUEST]', '').trim();
+      try {
+        await db.addContactMessage({
+          name: 'AI Chat Guest',
+          email: 'aichat@motogearhub.in',
+          subject: 'Escalated from AI Chatbot',
+          message: message
+        });
+        console.log('📝 Saved AI-escalated contact ticket in MongoDB!');
+      } catch (saveErr) {
+        console.error('Failed to automatically record AI escalated ticket:', saveErr);
+      }
+    }
+
+    res.json({ reply });
   } catch (err: any) {
     console.error('AI Chat Error:', err);
     res.status(500).json({ error: 'Failed to process AI chat. Please try again.' });
@@ -751,6 +852,14 @@ app.get('/api/analytics', requireAdmin, async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Global unhandled error handling middleware
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  console.error('Unhandled server error caught:', err);
+  res.status(err.status || err.statusCode || 500).json({
+    error: err.message || 'An unexpected internal server error occurred.'
+  });
 });
 
 // ---------------------------------------------------------------------------
