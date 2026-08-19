@@ -5,6 +5,7 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
@@ -15,7 +16,18 @@ import { GoogleGenAI } from '@google/genai';
 
 const app = express();
 const PORT = 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'motogear-hub-super-secret-key-2026';
+
+// SECURITY: never fall back to a hardcoded/public JWT secret - that would let
+// anyone forge valid admin tokens. If JWT_SECRET isn't configured, generate a
+// random one for this process only. This keeps local/dev usage working, but
+// means every restart invalidates existing sessions - which is the correct
+// trade-off for an unconfigured secret. Production deployments MUST set
+// JWT_SECRET explicitly (see .env.example).
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️  JWT_SECRET is not set. Generating a random, ephemeral secret for this process.');
+  console.warn('⚠️  All admin sessions will be invalidated on restart. Set JWT_SECRET in your environment for production.');
+}
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
 // ---------------------------------------------------------------------------
 // MIDDLEWARE & SECURITY CONFIGURATION
@@ -27,10 +39,19 @@ app.use(helmet({
 }));
 
 // CORS Configuration
+// SECURITY: origin:true + credentials:true reflects every caller's origin and
+// sends cookies with it, which lets any external site make credentialed
+// requests as a logged-in admin (CSRF). Restrict to the app's own origin(s).
+// APP_URL should be set in production (see .env.example). Falls back to
+// allowing any origin only when APP_URL isn't configured, for local preview.
+const allowedOrigins = (process.env.APP_URL || '').split(',').map(o => o.trim()).filter(Boolean);
 app.use(cors({
-  origin: true, // Allow all origins for simplicity in previews
+  origin: allowedOrigins.length > 0 ? allowedOrigins : true,
   credentials: true
 }));
+if (allowedOrigins.length === 0) {
+  console.warn('⚠️  APP_URL is not set - CORS is allowing all origins. Set APP_URL in production to restrict this.');
+}
 
 app.use(express.json());
 app.use(cookieParser());
@@ -57,6 +78,17 @@ function rateLimiter(req: Request, res: Response, next: NextFunction) {
 }
 
 app.use(rateLimiter);
+
+// Periodically prune expired rate-limit records so the Map doesn't grow
+// unbounded over the life of the process.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of ipLimits) {
+    if (now > record.resetAt) {
+      ipLimits.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000).unref();
 
 // Request validation middlewares for input safety
 function validateLogin(req: Request, res: Response, next: NextFunction) {
@@ -128,16 +160,19 @@ app.post('/api/auth/login', validateLogin, async (req: Request, res: Response) =
 
     const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '30d' });
 
-    // Set cookie
+    // SECURITY: the httpOnly cookie is the only place the token lives now.
+    // It is intentionally NOT included in the JSON response - returning it
+    // there would let client-side JS (and therefore any XSS) read and
+    // persist it, defeating the point of httpOnly.
     res.cookie('admin_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     });
 
     return res.json({
       success: true,
-      token,
       user: { username }
     });
   } catch (err: any) {
@@ -549,8 +584,15 @@ function requireGoogleToken(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// SECURITY: these routes read/export the full product catalog, click analytics,
+// and blog drafts. requireGoogleToken alone only proves the caller signed in
+// with SOME Google account - it does not prove they are a site admin. Every
+// workspace route must also pass requireAdmin (site admin session), or any
+// visitor who connects a Google account could exfiltrate this data to their
+// own Sheets/Docs.
+
 // Google Sheets Catalog Sync
-app.post('/api/workspace/sheets/sync', requireGoogleToken, async (req, res) => {
+app.post('/api/workspace/sheets/sync', requireAdmin, requireGoogleToken, async (req, res) => {
   const token = (req as any).googleToken;
   try {
     const products = await db.getProducts();
@@ -643,7 +685,7 @@ app.post('/api/workspace/sheets/sync', requireGoogleToken, async (req, res) => {
 });
 
 // Google Docs Draft Generator
-app.post('/api/workspace/docs/draft', requireGoogleToken, async (req, res) => {
+app.post('/api/workspace/docs/draft', requireAdmin, requireGoogleToken, async (req, res) => {
   const token = (req as any).googleToken;
   const { blogId } = req.body;
 
@@ -735,7 +777,7 @@ app.post('/api/workspace/docs/draft', requireGoogleToken, async (req, res) => {
 });
 
 // Gmail Response dispatcher
-app.post('/api/workspace/gmail/send', requireGoogleToken, async (req, res) => {
+app.post('/api/workspace/gmail/send', requireAdmin, requireGoogleToken, async (req, res) => {
   const token = (req as any).googleToken;
   const { to, subject, bodyText } = req.body;
 
@@ -786,7 +828,7 @@ app.post('/api/workspace/gmail/send', requireGoogleToken, async (req, res) => {
 });
 
 // Google Chat spaces retriever
-app.get('/api/workspace/chat/spaces', requireGoogleToken, async (req, res) => {
+app.get('/api/workspace/chat/spaces', requireAdmin, requireGoogleToken, async (req, res) => {
   const token = (req as any).googleToken;
   try {
     const chatRes = await fetch('https://chat.googleapis.com/v1/spaces', {
@@ -809,7 +851,7 @@ app.get('/api/workspace/chat/spaces', requireGoogleToken, async (req, res) => {
 });
 
 // Google Chat Alert dispatcher
-app.post('/api/workspace/chat/notify', requireGoogleToken, async (req, res) => {
+app.post('/api/workspace/chat/notify', requireAdmin, requireGoogleToken, async (req, res) => {
   const token = (req as any).googleToken;
   const { spaceId, text } = req.body;
 
